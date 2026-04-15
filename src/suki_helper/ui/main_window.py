@@ -3,9 +3,10 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-from PySide6.QtCore import QSize, QThreadPool, Qt
+from PySide6.QtCore import QEvent, QSize, QThreadPool, Qt
 from PySide6.QtGui import QAction, QGuiApplication, QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -65,6 +66,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self._build_shortcuts()
+        self._install_key_handlers()
         self._connect_signals()
         self._refresh_document_selector()
         self._update_page_navigation_buttons()
@@ -73,13 +75,13 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         left_pane = self._build_left_pane()
         right_pane = self._build_right_pane()
-        left_pane.setMinimumWidth(420)
+        left_pane.setMinimumWidth(560)
         right_pane.setMinimumWidth(900)
         splitter.addWidget(left_pane)
         splitter.addWidget(right_pane)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 8)
-        splitter.setSizes([480, 1400])
+        splitter.setSizes([620, 1360])
         self.setCentralWidget(splitter)
 
     def _build_left_pane(self) -> QWidget:
@@ -272,10 +274,18 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.exit_action)
 
     def _build_shortcuts(self) -> None:
-        self.prev_page_shortcut = QShortcut(QKeySequence(Qt.Key_Up), self.page_scroll_area)
-        self.next_page_shortcut = QShortcut(QKeySequence(Qt.Key_Down), self.page_scroll_area)
-        self.prev_page_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
-        self.next_page_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self.prev_page_shortcut = QShortcut(QKeySequence(Qt.Key_Up), self)
+        self.next_page_shortcut = QShortcut(QKeySequence(Qt.Key_Down), self)
+        self.prev_page_shortcut.setContext(Qt.WindowShortcut)
+        self.next_page_shortcut.setContext(Qt.WindowShortcut)
+
+    def _install_key_handlers(self) -> None:
+        QApplication.instance().installEventFilter(self)
+        self.result_list.installEventFilter(self)
+        self.result_list.viewport().installEventFilter(self)
+        self.page_scroll_area.installEventFilter(self)
+        self.page_scroll_area.viewport().installEventFilter(self)
+        self.page_viewer.installEventFilter(self)
 
     def _configure_initial_window_size(self) -> None:
         screen = QGuiApplication.primaryScreen()
@@ -395,7 +405,7 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem()
             item.setData(Qt.UserRole, result.page_number)
             item.setData(Qt.UserRole + 1, current_search_token)
-            item.setSizeHint(QSize(0, 340))
+            item.setSizeHint(QSize(0, 500))
             self.result_list.addItem(item)
             widget, thumbnail_label = self._build_result_item_widget(result)
             self._result_thumbnail_labels[row_index] = thumbnail_label
@@ -429,6 +439,69 @@ class MainWindow(QMainWindow):
         if current_index < 0 or current_index >= len(self._documents_by_index):
             return None
         return self._documents_by_index[current_index]
+
+    def _focus_within(self, widget: QWidget) -> bool:
+        focused = QApplication.focusWidget()
+        if focused is None:
+            return False
+        return focused is widget or widget.isAncestorOf(focused)
+
+    def _move_result_selection(self, delta: int) -> None:
+        if self.result_list.count() <= 0:
+            return
+
+        current_row = self.result_list.currentRow()
+        if current_row < 0:
+            current_row = 0 if delta >= 0 else self.result_list.count() - 1
+
+        next_row = max(0, min(self.result_list.count() - 1, current_row + delta))
+        if next_row == current_row:
+            return
+
+        self.result_list.setCurrentRow(next_row)
+        item = self.result_list.item(next_row)
+        if item is not None:
+            self.result_list.scrollToItem(item)
+
+    def eventFilter(self, watched: object, event: QEvent) -> bool:  # type: ignore[override]
+        if event.type() == QEvent.KeyPress and hasattr(event, "key"):
+            key = event.key()  # type: ignore[attr-defined]
+            if key in (Qt.Key_Up, Qt.Key_Down):
+                if self.search_input.hasFocus():
+                    return False
+
+                focused = QApplication.focusWidget()
+
+                if watched in (self.result_list, self.result_list.viewport()):
+                    self._move_result_selection(-1 if key == Qt.Key_Up else 1)
+                    return True
+
+                if watched in (
+                    self.page_scroll_area,
+                    self.page_scroll_area.viewport(),
+                    self.page_viewer,
+                ):
+                    if key == Qt.Key_Up:
+                        self._show_previous_page()
+                    else:
+                        self._show_next_page()
+                    return True
+
+                if focused is not None and self._focus_within(self.result_list):
+                    self._move_result_selection(-1 if key == Qt.Key_Up else 1)
+                    return True
+
+                if focused is not None and (
+                    self._focus_within(self.page_scroll_area)
+                    or self._focus_within(self.page_viewer)
+                ):
+                    if key == Qt.Key_Up:
+                        self._show_previous_page()
+                    else:
+                        self._show_next_page()
+                    return True
+
+        return super().eventFilter(watched, event)
 
     def _current_search_options(self) -> SearchOptions:
         max_gap_chars: int | None = None
@@ -572,24 +645,38 @@ class MainWindow(QMainWindow):
             self._apply_viewer_pixmap()
 
     def _handle_prev_page_shortcut(self) -> None:
+        if self.search_input.hasFocus():
+            return
+        if self._focus_within(self.result_list):
+            self._move_result_selection(-1)
+            return
         self._show_previous_page()
 
     def _handle_next_page_shortcut(self) -> None:
+        if self.search_input.hasFocus():
+            return
+        if self._focus_within(self.result_list):
+            self._move_result_selection(1)
+            return
         self._show_next_page()
 
     def _show_previous_page(self) -> None:
-        if self._current_document is None or self._current_page_number is None:
+        document = self._current_document or self._selected_document()
+        if document is None:
             return
-        if self._current_page_number <= 1:
+        current_page_number = self._current_page_number or 1
+        if current_page_number <= 1:
             return
-        self._start_page_render(self._current_document, self._current_page_number - 1)
+        self._start_page_render(document, current_page_number - 1)
 
     def _show_next_page(self) -> None:
-        if self._current_document is None or self._current_page_number is None:
+        document = self._current_document or self._selected_document()
+        if document is None:
             return
-        if self._current_page_number >= self._current_document.page_count:
+        current_page_number = self._current_page_number or 1
+        if current_page_number >= document.page_count:
             return
-        self._start_page_render(self._current_document, self._current_page_number + 1)
+        self._start_page_render(document, current_page_number + 1)
 
     def _start_page_render(
         self,
@@ -597,6 +684,7 @@ class MainWindow(QMainWindow):
         page_number: int,
     ) -> None:
         self._current_document = document
+        self._current_page_number = page_number
         self.page_title_label.setText(f"Page {page_number}")
         self.page_viewer.clear()
         self.page_viewer.setText("Rendering page preview...")
@@ -620,15 +708,14 @@ class MainWindow(QMainWindow):
         self._thread_pool.start(worker)
 
     def _update_page_navigation_buttons(self) -> None:
-        if self._current_document is None or self._current_page_number is None:
+        document = self._current_document or self._selected_document()
+        if document is None:
             self.prev_page_button.setEnabled(False)
             self.next_page_button.setEnabled(False)
             return
 
-        self.prev_page_button.setEnabled(self._current_page_number > 1)
-        self.next_page_button.setEnabled(
-            self._current_page_number < self._current_document.page_count
-        )
+        self.prev_page_button.setEnabled(True)
+        self.next_page_button.setEnabled(True)
 
     def _on_selected_document_changed(self, current_index: int) -> None:
         if current_index < 0 or current_index >= len(self._documents_by_index):
@@ -687,15 +774,15 @@ class MainWindow(QMainWindow):
     def _build_result_item_widget(self, result: SearchResult) -> tuple[QWidget, QLabel]:
         container = QWidget()
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(14)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(16)
 
         container.setStyleSheet(
             "background: #faf8f2; border: 1px solid #ddd6c8; border-radius: 10px;"
         )
 
         thumbnail_label = QLabel()
-        thumbnail_label.setFixedSize(220, 300)
+        thumbnail_label.setFixedSize(320, 440)
         thumbnail_label.setAlignment(Qt.AlignCenter)
         thumbnail_label.setStyleSheet(
             "background: #f4f4f4; border: 1px solid #d4d4d4; border-radius: 8px;"
@@ -714,7 +801,7 @@ class MainWindow(QMainWindow):
         text_label.setWordWrap(True)
         text_label.setTextFormat(Qt.RichText)
         text_label.setTextInteractionFlags(Qt.NoTextInteraction)
-        text_label.setMinimumWidth(260)
+        text_label.setMinimumWidth(320)
         text_label.setText(self._build_highlighted_result_html(result))
         text_panel_layout.addWidget(text_label)
 
