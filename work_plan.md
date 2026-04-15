@@ -453,6 +453,8 @@ Status:
 
 - completed for initial synchronous page rendering
 - background page-render worker added for the current UI path
+- lower-DPI default detail rendering added for faster first display
+- bounded in-memory cache and optional external-process detail rendering added
 
 Objective:
 
@@ -568,6 +570,8 @@ Completed since the last checkpoint:
 - benchmark entry point added for indexing and search timing
 - page-frequency-based rarity weighting added to ranking
 - indexing progress label and progress bar added
+- right-pane detail rendering now uses a lower default DPI and a bounded memory cache
+- optional external-process detail rendering path added without touching search-result flow
 
 Reason:
 

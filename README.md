@@ -31,6 +31,20 @@ source .venv/bin/activate
 python -m suki_helper.app.main
 ```
 
+To move only the right-pane detail rendering onto a separate process, set:
+
+```bash
+export SUKI_HELPER_DETAIL_RENDER_BACKEND=process
+python -m suki_helper.app.main
+```
+
+On Windows:
+
+```bat
+set SUKI_HELPER_DETAIL_RENDER_BACKEND=process
+python -m suki_helper.app.main
+```
+
 Application data is stored in the per-user app data directory by default.
 
 - macOS: `~/Library/Application Support/suki-helper/data`

@@ -4,7 +4,7 @@ import html
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSize, QThreadPool, Qt
-from PySide6.QtGui import QAction, QGuiApplication, QImage, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QAction, QGuiApplication, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -280,7 +280,6 @@ class MainWindow(QMainWindow):
         self.next_page_shortcut.setContext(Qt.WindowShortcut)
 
     def _install_key_handlers(self) -> None:
-        QApplication.instance().installEventFilter(self)
         self.result_list.installEventFilter(self)
         self.result_list.viewport().installEventFilter(self)
         self.page_scroll_area.installEventFilter(self)
@@ -540,11 +539,10 @@ class MainWindow(QMainWindow):
                 thumbnail_label.setPixmap(pixmap)
 
     def _on_page_render_finished(self, payload: object) -> None:
-        render_token, page_number, png_bytes = payload
+        render_token, page_number, image = payload
         if render_token != self._active_render_token:
             return
 
-        image = QImage.fromData(png_bytes, "PNG")
         pixmap = QPixmap.fromImage(image)
         self._current_page_pixmap = pixmap
         self._current_page_number = page_number
@@ -697,10 +695,10 @@ class MainWindow(QMainWindow):
             lambda: (
                 current_token,
                 page_number,
-                self._render_service.render_page_png_bytes(
+                self._render_service.render_page_image(
                     file_path=document.file_path,
                     page_number=page_number,
-                    dpi=160,
+                    dpi=120,
                 ),
             )
         )

@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QImage, QPixmap
 
-from suki_helper.services.render_service import RenderService
+from suki_helper.services.render_service import INLINE_RENDER_BACKEND, RenderService
 from suki_helper.storage.db import AppPaths
 
 
@@ -51,6 +51,7 @@ class PreviewService:
             file_path=file_path,
             page_number=page_number,
             dpi=dpi,
+            backend=INLINE_RENDER_BACKEND,
         )
         scaled = pixmap.scaledToWidth(width, Qt.SmoothTransformation)
         for cache_path in cache_paths:

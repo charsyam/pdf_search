@@ -35,9 +35,12 @@ Current working state after that commit:
 - search options added for ordered match, separator-only matching, and max-gap filtering
 - render and thumbnail disk cache added for reuse across app restarts
 - application theme is now fixed to a light palette regardless of OS dark mode
-- theme option added with Light, Dark, and System modes persisted in settings
 - left pane simplified to PDF selection, keyword input, search button, and results only
 - thumbnail quality reduced again to improve search/result responsiveness
+- right-pane detail rendering now defaults to a lower DPI for faster first display
+- right-pane detail rendering now keeps a bounded in-memory image cache
+- optional external-process detail rendering path added for heavier page renders
+- left thumbnails stay on the inline render path so result browsing is not delayed
 
 ## Implemented So Far
 
@@ -93,7 +96,8 @@ Current working state after that commit:
 - thumbnails and rendered pages are now also persisted to disk cache
 - left pane shows an explicit no-results state when a search returns zero matches
 - app-wide fixed light theme applied to avoid OS theme drift
-- theme switching menu with persisted app setting implemented
+- right-pane detail rendering now uses a lower-DPI fast path with bounded memory cache
+- right-pane detail rendering can optionally run through a separate process
 
 ### Packaging
 
@@ -110,7 +114,7 @@ PYTHONPATH=src pytest -q
 
 Latest verified result at the time of writing:
 
-- `24 passed`
+- `36 passed`
 
 App launch command:
 
@@ -122,13 +126,13 @@ PYTHONPATH=src python -m suki_helper.app.main
 
 ## Known Gaps
 
-- right pane does not yet render high-resolution page images
 - indexing has a worker-based UI path, but broader job orchestration is still minimal
 - thumbnail generation still runs on the UI thread for visible rows
 - performance tuning and Windows validation are still pending
 - the Windows build path is defined, but the actual `.exe` has not been produced or smoke-tested in a Windows environment yet
 - benchmark coverage is still basic and does not yet compare multiple document sizes
 - repeated text that appears on almost every page can still dominate when the query itself is globally repeated
+- external-process detail rendering exists, but it still needs real Windows packaged-build validation
 
 ## Next Recommended Start Point
 
@@ -136,7 +140,7 @@ Resume from:
 
 1. benchmark larger PDFs and tune cache and worker behavior
 2. move visible-row thumbnail generation off the UI thread safely
-3. validate the current flow on Windows
+3. validate inline and external detail rendering on Windows one-file builds
 4. refine repeated-text penalties for globally repeated queries
 
 ## Rule For Future Updates

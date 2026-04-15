@@ -6,8 +6,9 @@ import fitz
 from PySide6.QtWidgets import QApplication
 
 from suki_helper.services.preview_service import PreviewService
-from suki_helper.services.render_service import RenderService
+from suki_helper.services.render_service import PROCESS_RENDER_BACKEND, RenderService
 from suki_helper.storage.db import bootstrap_storage
+from suki_helper.tools.render_worker import main as render_worker_main
 
 
 def _create_sample_pdf(pdf_path: Path) -> None:
@@ -99,6 +100,65 @@ def test_render_service_uses_disk_cache_when_source_pdf_is_missing(tmp_path: Pat
     second_png = service.render_page_png_bytes(file_path=pdf_path, page_number=1, dpi=144)
 
     assert second_png == first_png
+
+
+def test_render_worker_writes_png_file(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "sample.pdf"
+    output_path = tmp_path / "render.png"
+    _create_sample_pdf(pdf_path)
+
+    exit_code = render_worker_main(
+        [
+            "--file",
+            str(pdf_path),
+            "--page",
+            "1",
+            "--dpi",
+            "120",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert output_path.read_bytes()
+
+
+def test_render_service_can_use_external_process_backend(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _get_app()
+    paths = bootstrap_storage(root_dir=tmp_path)
+    pdf_path = tmp_path / "sample.pdf"
+    _create_sample_pdf(pdf_path)
+
+    service = RenderService(paths, detail_backend=PROCESS_RENDER_BACKEND)
+
+    def fake_run(command, stdout, stderr, check):
+        output_index = command.index("--output") + 1
+        output_path = Path(command[output_index])
+        output_path.write_bytes(
+            service.render_page_png_bytes(
+                file_path=pdf_path,
+                page_number=1,
+                dpi=120,
+                backend="inline",
+            )
+        )
+
+        class Result:
+            returncode = 0
+            stderr = b""
+
+        return Result()
+
+    monkeypatch.setattr("suki_helper.services.render_service.subprocess.run", fake_run)
+
+    image = service.render_page_image(file_path=pdf_path, page_number=1, dpi=120)
+
+    assert not image.isNull()
 
 
 def test_preview_service_uses_disk_cache_when_source_pdf_is_missing(tmp_path: Path) -> None:
