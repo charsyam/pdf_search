@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QThreadPool, Qt
+from PySide6.QtGui import QAction, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -13,15 +13,18 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QStackedWidget,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from suki_helper.services.document_registry import DocumentRegistryService, RegisteredDocument
+from suki_helper.services.preview_service import PreviewService
+from suki_helper.services.render_service import RenderService
 from suki_helper.services.search_service import SearchResult, SearchService
+from suki_helper.workers.task_worker import TaskWorker
 
 
 class MainWindow(QMainWindow):
@@ -29,13 +32,19 @@ class MainWindow(QMainWindow):
         self,
         *,
         document_registry: DocumentRegistryService,
+        preview_service: PreviewService,
+        render_service: RenderService,
         search_service: SearchService,
     ) -> None:
         super().__init__()
         self._document_registry = document_registry
+        self._preview_service = preview_service
+        self._render_service = render_service
         self._search_service = search_service
         self._documents_by_index: list[RegisteredDocument] = []
         self._results: list[SearchResult] = []
+        self._thread_pool = QThreadPool.globalInstance()
+        self._active_render_token = 0
         self.setWindowTitle("suki-helper")
         self.resize(1400, 900)
         self._build_ui()
@@ -81,14 +90,17 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(container)
 
         self.page_title_label = QLabel("No page selected")
-        self.page_viewer = QTextEdit()
-        self.page_viewer.setReadOnly(True)
-        self.page_viewer.setPlainText(
-            "High-resolution page preview will appear here."
-        )
+        self.page_viewer = QLabel("High-resolution page preview will appear here.")
+        self.page_viewer.setAlignment(Qt.AlignCenter)
+        self.page_viewer.setMinimumSize(480, 640)
+        self.page_viewer.setStyleSheet("background: #f4f4f4; color: #666;")
+        self.page_scroll_area = QScrollArea()
+        self.page_scroll_area.setWidgetResizable(True)
+        self.page_scroll_area.setAlignment(Qt.AlignCenter)
+        self.page_scroll_area.setWidget(self.page_viewer)
 
         layout.addWidget(self.page_title_label)
-        layout.addWidget(self.page_viewer, 1)
+        layout.addWidget(self.page_scroll_area, 1)
         return container
 
     def _build_empty_state(self) -> QWidget:
@@ -125,11 +137,16 @@ class MainWindow(QMainWindow):
         self.add_pdf_action = QAction("Add PDF", self)
         self.add_pdf_action.setShortcut("Ctrl+O")
         file_menu.addAction(self.add_pdf_action)
+        file_menu.addSeparator()
+
+        self.exit_action = QAction("Exit", self)
+        file_menu.addAction(self.exit_action)
 
     def _connect_signals(self) -> None:
         self.open_button.clicked.connect(self._open_pdf_files)
         self.empty_state_button.clicked.connect(self._open_pdf_files)
         self.add_pdf_action.triggered.connect(self._open_pdf_files)
+        self.exit_action.triggered.connect(self.close)
         self.search_input.returnPressed.connect(self._run_search)
         self.result_list.currentRowChanged.connect(self._display_selected_result)
 
@@ -143,10 +160,21 @@ class MainWindow(QMainWindow):
         if not file_paths:
             return
 
-        for file_path in file_paths:
-            self._document_registry.register_pdf(Path(file_path))
+        self._set_busy_state(True, "Indexing PDF files...")
+        worker = TaskWorker(
+            lambda: [
+                self._document_registry.register_pdf(Path(file_path))
+                for file_path in file_paths
+            ]
+        )
+        worker.signals.finished.connect(self._on_pdf_indexing_finished)
+        worker.signals.failed.connect(self._on_background_task_failed)
+        self._thread_pool.start(worker)
 
+    def _on_pdf_indexing_finished(self, _result: object) -> None:
         self._refresh_document_selector()
+        self.pdf_selector.setCurrentIndex(max(0, self.pdf_selector.count() - 1))
+        self._set_busy_state(False, "PDF indexing completed.")
 
     def _refresh_document_selector(self) -> None:
         self._documents_by_index = self._document_registry.list_documents()
@@ -183,10 +211,15 @@ class MainWindow(QMainWindow):
         self.left_stack.setCurrentIndex(1)
 
         for result in self._results:
+            icon = self._preview_service.build_result_icon(
+                file_path=selected_document.file_path,
+                page_number=result.page_number,
+            )
             item = QListWidgetItem(
                 f"Page {result.page_number}: "
                 f"{result.context_before}[{result.context_match}]{result.context_after}"
             )
+            item.setIcon(icon)
             self.result_list.addItem(item)
 
         self.result_count_label.setText(f"Results: {len(self._results)}")
@@ -194,20 +227,64 @@ class MainWindow(QMainWindow):
             self.result_list.setCurrentRow(0)
         else:
             self.page_title_label.setText("No page selected")
-            self.page_viewer.setPlainText(
-                "No search result. Try another keyword."
-            )
+            self.page_viewer.clear()
+            self.page_viewer.setText("No search result. Try another keyword.")
 
     def _display_selected_result(self, row_index: int) -> None:
         if row_index < 0 or row_index >= len(self._results):
             return
 
+        selected_document = self._selected_document()
+        if selected_document is None:
+            return
+
         result = self._results[row_index]
         self.page_title_label.setText(f"Page {result.page_number}")
-        self.page_viewer.setPlainText(result.original_text)
+        self.page_viewer.clear()
+        self.page_viewer.setText("Rendering page preview...")
+
+        self._active_render_token += 1
+        current_token = self._active_render_token
+        worker = TaskWorker(
+            lambda: (
+                current_token,
+                result.page_number,
+                self._render_service.render_page_png_bytes(
+                    file_path=selected_document.file_path,
+                    page_number=result.page_number,
+                    dpi=160,
+                ),
+            )
+        )
+        worker.signals.finished.connect(self._on_page_render_finished)
+        worker.signals.failed.connect(self._on_background_task_failed)
+        self._thread_pool.start(worker)
 
     def _selected_document(self) -> RegisteredDocument | None:
         current_index = self.pdf_selector.currentIndex()
         if current_index < 0 or current_index >= len(self._documents_by_index):
             return None
         return self._documents_by_index[current_index]
+
+    def _on_page_render_finished(self, payload: object) -> None:
+        render_token, page_number, png_bytes = payload
+        if render_token != self._active_render_token:
+            return
+
+        image = QImage.fromData(png_bytes, "PNG")
+        pixmap = QPixmap.fromImage(image)
+        self.page_title_label.setText(f"Page {page_number}")
+        self.page_viewer.setPixmap(pixmap)
+        self.page_viewer.resize(pixmap.size())
+        self.statusBar().showMessage("Page render completed.", 3000)
+
+    def _on_background_task_failed(self, message: str) -> None:
+        self._set_busy_state(False, f"Background task failed: {message}")
+        self.page_viewer.clear()
+        self.page_viewer.setText(f"Task failed: {message}")
+
+    def _set_busy_state(self, is_busy: bool, message: str) -> None:
+        self.open_button.setEnabled(not is_busy)
+        self.empty_state_button.setEnabled(not is_busy)
+        self.add_pdf_action.setEnabled(not is_busy)
+        self.statusBar().showMessage(message, 5000 if not is_busy else 0)

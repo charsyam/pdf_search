@@ -14,6 +14,9 @@ Current working state after that commit:
 - document registration and per-PDF indexing connected to the UI
 - empty-state-first startup flow implemented
 - `File -> Add PDF` menu and add button implemented
+- right-pane PDF page rendering implemented
+- left-pane result thumbnail generation implemented
+- background worker support added for PDF indexing and right-pane page rendering
 
 ## Implemented So Far
 
@@ -49,7 +52,9 @@ Current working state after that commit:
 - indexed PDF selection implemented
 - Enter-based search connected
 - result list connected
-- result click shows page text in the right pane as a temporary placeholder
+- result click renders the selected page as an image in the right pane
+- result list items include basic page thumbnails
+- indexing and right-pane page rendering now run through worker tasks
 
 ## Verified State
 
@@ -62,7 +67,7 @@ PYTHONPATH=src pytest -q
 
 Latest verified result at the time of writing:
 
-- `13 passed`
+- `17 passed`
 
 App launch command:
 
@@ -75,9 +80,10 @@ PYTHONPATH=src python -m suki_helper.app.main
 ## Known Gaps
 
 - right pane does not yet render high-resolution page images
-- left result list does not yet show low-resolution thumbnails
-- indexing is currently synchronous
-- rendering and indexing workers are not yet in place
+- indexing has a worker-based UI path, but broader job orchestration is still minimal
+- thumbnail generation during search result population is still synchronous
+- visible-row lazy thumbnail loading is not yet implemented
+- zoom and fit viewer controls are not yet implemented
 - performance tuning and Windows validation are still pending
 
 ## Next Recommended Start Point
@@ -85,9 +91,9 @@ PYTHONPATH=src python -m suki_helper.app.main
 Resume from:
 
 1. implement a PDF page renderer using `PyMuPDF`
-2. replace the right-pane text placeholder with rendered page images
-3. add thumbnail generation for result rows
-4. move indexing and rendering to background workers
+2. make thumbnail loading lazy for visible search results
+3. add zoom and fit controls to the right-pane viewer
+4. benchmark larger PDFs and tune cache and worker behavior
 
 ## Rule For Future Updates
 

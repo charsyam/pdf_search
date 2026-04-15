@@ -338,7 +338,8 @@ Exit criteria:
 
 Status:
 
-- completed for synchronous local indexing flow
+- completed for local indexing flow
+- background indexing worker added for the current UI path
 
 Objective:
 
@@ -413,7 +414,7 @@ Exit criteria:
 
 Status:
 
-- pending
+- completed for initial synchronous thumbnail rendering
 
 Objective:
 
@@ -448,7 +449,8 @@ Exit criteria:
 
 Status:
 
-- in progress
+- completed for initial synchronous page rendering
+- background page-render worker added for the current UI path
 
 Objective:
 
@@ -482,7 +484,7 @@ Exit criteria:
 
 Status:
 
-- pending
+- in progress
 
 Objective:
 
@@ -548,9 +550,9 @@ Thumbnail work is important, but the right-pane detail flow is slightly more cri
 
 The next three tasks should be:
 
-1. implement PDF page rendering service for the right pane
-2. implement low-resolution thumbnail generation and list binding
-3. add background workers so indexing and rendering do not block the UI
+1. add background workers so indexing and rendering do not block the UI
+2. replace eager thumbnail generation with lazy visible-row rendering
+3. add zoom and fit controls to the right-pane image viewer
 
 Reason:
 
