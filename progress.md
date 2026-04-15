@@ -26,6 +26,8 @@ Current working state after that commit:
 - right-pane previous/next page navigation added
 - right-pane page navigation now also supports Up/Down arrow keys
 - left search results now visually highlight the matched text
+- changing the selected PDF now resets the old search state
+- selecting a PDF now auto-renders its first page in the right pane
 
 ## Implemented So Far
 
@@ -60,6 +62,8 @@ Current working state after that commit:
 - startup empty state implemented
 - PDF add flow implemented
 - indexed PDF selection implemented
+- switching the selected PDF resets the previous search results and page preview
+- selecting a PDF immediately shows page 1 in the right pane
 - indexing progress label and progress bar implemented
 - Enter-based search connected
 - result list connected

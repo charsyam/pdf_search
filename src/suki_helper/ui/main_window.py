@@ -4,7 +4,7 @@ import html
 from pathlib import Path
 
 from PySide6.QtCore import QSize, QThreadPool, Qt
-from PySide6.QtGui import QAction, QGuiApplication, QImage, QPixmap
+from PySide6.QtGui import QAction, QGuiApplication, QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
         self._configure_initial_window_size()
         self._build_ui()
         self._build_menu()
+        self._build_shortcuts()
         self._connect_signals()
         self._refresh_document_selector()
         self._update_page_navigation_buttons()
@@ -100,6 +101,7 @@ class MainWindow(QMainWindow):
         self.result_list.setSpacing(10)
         self.left_stack = QStackedWidget()
         self.left_stack.addWidget(self._build_empty_state())
+        self.left_stack.addWidget(self._build_ready_state())
         self.left_stack.addWidget(self._build_no_results_state())
         self.left_stack.addWidget(self.result_list)
 
@@ -142,10 +144,12 @@ class MainWindow(QMainWindow):
         self.page_viewer.setAlignment(Qt.AlignCenter)
         self.page_viewer.setMinimumSize(900, 1200)
         self.page_viewer.setStyleSheet("background: #f4f4f4; color: #666;")
+        self.page_viewer.setFocusPolicy(Qt.StrongFocus)
         self.page_scroll_area = QScrollArea()
         self.page_scroll_area.setWidgetResizable(True)
         self.page_scroll_area.setAlignment(Qt.AlignCenter)
         self.page_scroll_area.setWidget(self.page_viewer)
+        self.page_scroll_area.setFocusPolicy(Qt.StrongFocus)
 
         layout.addWidget(self.page_title_label)
         layout.addWidget(controls_row)
@@ -200,6 +204,26 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         return container
 
+    def _build_ready_state(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.addStretch(1)
+
+        title = QLabel("Ready To Search")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 20px; font-weight: 600;")
+
+        description = QLabel(
+            "Select a keyword and press Enter to search within the chosen PDF."
+        )
+        description.setAlignment(Qt.AlignCenter)
+        description.setStyleSheet("color: #666;")
+
+        layout.addWidget(title)
+        layout.addWidget(description)
+        layout.addStretch(1)
+        return container
+
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
 
@@ -210,6 +234,12 @@ class MainWindow(QMainWindow):
 
         self.exit_action = QAction("Exit", self)
         file_menu.addAction(self.exit_action)
+
+    def _build_shortcuts(self) -> None:
+        self.prev_page_shortcut = QShortcut(QKeySequence(Qt.Key_Up), self.page_scroll_area)
+        self.next_page_shortcut = QShortcut(QKeySequence(Qt.Key_Down), self.page_scroll_area)
+        self.prev_page_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self.next_page_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
 
     def _configure_initial_window_size(self) -> None:
         screen = QGuiApplication.primaryScreen()
@@ -227,6 +257,7 @@ class MainWindow(QMainWindow):
         self.empty_state_button.clicked.connect(self._open_pdf_files)
         self.add_pdf_action.triggered.connect(self._open_pdf_files)
         self.exit_action.triggered.connect(self.close)
+        self.pdf_selector.currentIndexChanged.connect(self._on_selected_document_changed)
         self.search_input.returnPressed.connect(self._run_search)
         self.result_list.currentRowChanged.connect(self._display_selected_result)
         self.result_list.verticalScrollBar().valueChanged.connect(
@@ -236,6 +267,8 @@ class MainWindow(QMainWindow):
         self.actual_size_button.clicked.connect(self._set_actual_size_mode)
         self.prev_page_button.clicked.connect(self._show_previous_page)
         self.next_page_button.clicked.connect(self._show_next_page)
+        self.prev_page_shortcut.activated.connect(self._handle_prev_page_shortcut)
+        self.next_page_shortcut.activated.connect(self._handle_next_page_shortcut)
         self.zoom_in_button.clicked.connect(self._zoom_in)
         self.zoom_out_button.clicked.connect(self._zoom_out)
 
@@ -286,7 +319,7 @@ class MainWindow(QMainWindow):
             self.pdf_selector.addItem(
                 f"{document.file_name} ({document.page_count} pages)"
             )
-        self.left_stack.setCurrentIndex(1)
+        self._reset_selected_document_view(clear_query=False)
 
     def _run_search(self) -> None:
         selected_document = self._selected_document()
@@ -305,7 +338,7 @@ class MainWindow(QMainWindow):
         current_search_token = self._active_search_token
         self._result_thumbnail_labels = {}
         self.result_list.clear()
-        self.left_stack.setCurrentIndex(2)
+        self.left_stack.setCurrentIndex(3)
 
         for row_index, result in enumerate(self._results):
             item = QListWidgetItem()
@@ -322,7 +355,7 @@ class MainWindow(QMainWindow):
             self.result_list.setCurrentRow(0)
             self._request_visible_thumbnails()
         else:
-            self.left_stack.setCurrentIndex(1)
+            self.left_stack.setCurrentIndex(2)
             self.page_title_label.setText("No page selected")
             self._current_page_pixmap = None
             self._current_document = None
@@ -477,22 +510,11 @@ class MainWindow(QMainWindow):
         if self._fit_width_mode and self._current_page_pixmap is not None:
             self._apply_viewer_pixmap()
 
-    def keyPressEvent(self, event) -> None:  # type: ignore[override]
-        if self.search_input.hasFocus():
-            super().keyPressEvent(event)
-            return
+    def _handle_prev_page_shortcut(self) -> None:
+        self._show_previous_page()
 
-        if event.key() == Qt.Key_Up:
-            self._show_previous_page()
-            event.accept()
-            return
-
-        if event.key() == Qt.Key_Down:
-            self._show_next_page()
-            event.accept()
-            return
-
-        super().keyPressEvent(event)
+    def _handle_next_page_shortcut(self) -> None:
+        self._show_next_page()
 
     def _show_previous_page(self) -> None:
         if self._current_document is None or self._current_page_number is None:
@@ -546,6 +568,31 @@ class MainWindow(QMainWindow):
         self.next_page_button.setEnabled(
             self._current_page_number < self._current_document.page_count
         )
+
+    def _on_selected_document_changed(self, current_index: int) -> None:
+        if current_index < 0 or current_index >= len(self._documents_by_index):
+            return
+        document = self._documents_by_index[current_index]
+        self._reset_selected_document_view(clear_query=True)
+        self._start_page_render(document, 1)
+
+    def _reset_selected_document_view(self, *, clear_query: bool) -> None:
+        self._results = []
+        self._result_document_path = None
+        self._result_thumbnail_labels = {}
+        self._active_search_token += 1
+        self.result_list.clear()
+        self.result_count_label.setText("Results: 0")
+        if clear_query:
+            self.search_input.clear()
+        self.left_stack.setCurrentIndex(1)
+        self.page_title_label.setText("No page selected")
+        self._current_page_pixmap = None
+        self._current_document = None
+        self._current_page_number = None
+        self._update_page_navigation_buttons()
+        self.page_viewer.clear()
+        self.page_viewer.setText("Loading first page preview...")
 
     def _build_result_item_widget(self, result: SearchResult) -> tuple[QWidget, QLabel]:
         container = QWidget()
