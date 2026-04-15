@@ -4,7 +4,7 @@ import html
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSize, QThreadPool, Qt
-from PySide6.QtGui import QAction, QGuiApplication, QImage, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -27,10 +27,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from suki_helper.app.theme import ThemeMode, apply_theme_mode, load_theme_mode, save_theme_mode
 from suki_helper.services.document_registry import DocumentRegistryService, RegisteredDocument
 from suki_helper.services.preview_service import PreviewService
 from suki_helper.services.render_service import RenderService
 from suki_helper.services.search_service import SearchOptions, SearchResult, SearchService
+from suki_helper.storage.db import AppPaths
 from suki_helper.workers.indexing_worker import IndexingWorker
 from suki_helper.workers.task_worker import TaskWorker
 
@@ -39,12 +41,14 @@ class MainWindow(QMainWindow):
     def __init__(
         self,
         *,
+        paths: AppPaths,
         document_registry: DocumentRegistryService,
         preview_service: PreviewService,
         render_service: RenderService,
         search_service: SearchService,
     ) -> None:
         super().__init__()
+        self._paths = paths
         self._document_registry = document_registry
         self._preview_service = preview_service
         self._render_service = render_service
@@ -105,6 +109,10 @@ class MainWindow(QMainWindow):
         self.search_input.setStyleSheet(
             "font-size: 15px; padding: 8px 12px;"
         )
+        self.theme_selector = QComboBox()
+        self.theme_selector.addItem("Light", "light")
+        self.theme_selector.addItem("Dark", "dark")
+        self.theme_selector.addItem("System", "system")
         self.require_order_checkbox = QCheckBox("Require order")
         self.require_order_checkbox.setChecked(True)
         self.separator_only_checkbox = QCheckBox("Separator only")
@@ -145,6 +153,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.pdf_selector)
         layout.addWidget(QLabel("Search"))
         layout.addWidget(self.search_input)
+        layout.addWidget(QLabel("Theme"))
+        layout.addWidget(self.theme_selector)
         layout.addWidget(search_options_row)
         layout.addWidget(self.index_status_label)
         layout.addWidget(self.index_progress_bar)
@@ -273,6 +283,23 @@ class MainWindow(QMainWindow):
         self.exit_action = QAction("Exit", self)
         file_menu.addAction(self.exit_action)
 
+        view_menu = self.menuBar().addMenu("View")
+        theme_menu = view_menu.addMenu("Theme")
+        self.theme_action_group = QActionGroup(self)
+        self.theme_action_group.setExclusive(True)
+        self.light_theme_action = QAction("Light", self, checkable=True)
+        self.dark_theme_action = QAction("Dark", self, checkable=True)
+        self.system_theme_action = QAction("System", self, checkable=True)
+        for action in (
+            self.light_theme_action,
+            self.dark_theme_action,
+            self.system_theme_action,
+        ):
+            self.theme_action_group.addAction(action)
+            theme_menu.addAction(action)
+        self._sync_theme_menu()
+        self._sync_theme_selector()
+
     def _build_shortcuts(self) -> None:
         self.prev_page_shortcut = QShortcut(QKeySequence(Qt.Key_Up), self)
         self.next_page_shortcut = QShortcut(QKeySequence(Qt.Key_Down), self)
@@ -305,8 +332,12 @@ class MainWindow(QMainWindow):
         self.add_pdf_action.triggered.connect(self._open_pdf_files)
         self.remove_pdf_action.triggered.connect(self._remove_selected_pdf)
         self.exit_action.triggered.connect(self.close)
+        self.light_theme_action.triggered.connect(lambda: self._set_theme_mode("light"))
+        self.dark_theme_action.triggered.connect(lambda: self._set_theme_mode("dark"))
+        self.system_theme_action.triggered.connect(lambda: self._set_theme_mode("system"))
         self.pdf_selector.currentIndexChanged.connect(self._on_selected_document_changed)
         self.search_input.returnPressed.connect(self._run_search)
+        self.theme_selector.currentIndexChanged.connect(self._on_theme_selector_changed)
         self.max_gap_checkbox.toggled.connect(self.max_gap_spinbox.setEnabled)
         self.result_list.currentRowChanged.connect(self._display_selected_result)
         self.result_list.verticalScrollBar().valueChanged.connect(
@@ -513,6 +544,36 @@ class MainWindow(QMainWindow):
             max_gap_chars=max_gap_chars,
         )
 
+    def _set_theme_mode(self, mode: ThemeMode) -> None:
+        save_theme_mode(self._paths, mode)
+        app = QApplication.instance()
+        if app is None:
+            return
+        apply_theme_mode(app, mode)
+        self._sync_theme_menu()
+        self._sync_theme_selector()
+
+    def _sync_theme_menu(self) -> None:
+        current_mode = load_theme_mode(self._paths)
+        self.light_theme_action.setChecked(current_mode == "light")
+        self.dark_theme_action.setChecked(current_mode == "dark")
+        self.system_theme_action.setChecked(current_mode == "system")
+
+    def _sync_theme_selector(self) -> None:
+        current_mode = load_theme_mode(self._paths)
+        index = self.theme_selector.findData(current_mode)
+        if index < 0:
+            index = self.theme_selector.findData("light")
+        previous = self.theme_selector.blockSignals(True)
+        self.theme_selector.setCurrentIndex(index)
+        self.theme_selector.blockSignals(previous)
+
+    def _on_theme_selector_changed(self, current_index: int) -> None:
+        mode = self.theme_selector.itemData(current_index)
+        if mode not in {"light", "dark", "system"}:
+            return
+        self._set_theme_mode(mode)
+
     def _request_visible_thumbnails(self) -> None:
         if self._result_document_path is None:
             return
@@ -570,7 +631,16 @@ class MainWindow(QMainWindow):
         self._current_page_pixmap = None
         self._current_page_number = None
         self.page_viewer.clear()
-        self.page_viewer.setText(f"Task failed: {message}")
+        if "no such file" in message.lower() or "cannot open" in message.lower():
+            self.page_viewer.setText(
+                "Original PDF file is missing.\nCached preview is unavailable for this page."
+            )
+            self.statusBar().showMessage(
+                "Original PDF file is missing. Search index remains available.",
+                5000,
+            )
+        else:
+            self.page_viewer.setText(f"Task failed: {message}")
         self._update_page_navigation_buttons()
 
     def _set_busy_state(self, is_busy: bool, message: str) -> None:

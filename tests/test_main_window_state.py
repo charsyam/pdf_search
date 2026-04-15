@@ -12,6 +12,7 @@ from suki_helper.services.render_service import RenderService
 from suki_helper.services.search_service import SearchService
 from suki_helper.storage.db import bootstrap_storage
 from suki_helper.ui.main_window import MainWindow
+from suki_helper.app.theme import save_theme_mode
 
 
 def _create_sample_pdf(pdf_path: Path, text: str) -> None:
@@ -45,6 +46,7 @@ def test_changing_pdf_selection_resets_search_state(tmp_path: Path) -> None:
     document_registry.register_pdf(second_pdf)
 
     window = MainWindow(
+        paths=paths,
         document_registry=document_registry,
         preview_service=preview_service,
         render_service=render_service,
@@ -75,6 +77,7 @@ def test_removing_selected_pdf_resets_ui_state(tmp_path: Path, monkeypatch) -> N
     document_registry.register_pdf(pdf_path)
 
     window = MainWindow(
+        paths=paths,
         document_registry=document_registry,
         preview_service=preview_service,
         render_service=render_service,
@@ -104,6 +107,7 @@ def test_search_option_controls_are_wired(tmp_path: Path) -> None:
     document_registry.register_pdf(pdf_path)
 
     window = MainWindow(
+        paths=paths,
         document_registry=document_registry,
         preview_service=preview_service,
         render_service=render_service,
@@ -118,3 +122,23 @@ def test_search_option_controls_are_wired(tmp_path: Path) -> None:
     window.max_gap_checkbox.setChecked(True)
 
     assert window.max_gap_spinbox.isEnabled() is True
+
+
+def test_theme_selector_reflects_saved_theme_mode(tmp_path: Path) -> None:
+    _get_app()
+    paths = bootstrap_storage(root_dir=tmp_path)
+    save_theme_mode(paths, "dark")
+    document_registry = DocumentRegistryService(paths)
+    render_service = RenderService()
+    preview_service = PreviewService(render_service)
+    search_service = SearchService(paths)
+
+    window = MainWindow(
+        paths=paths,
+        document_registry=document_registry,
+        preview_service=preview_service,
+        render_service=render_service,
+        search_service=search_service,
+    )
+
+    assert window.theme_selector.currentData() == "dark"

@@ -33,6 +33,9 @@ Current working state after that commit:
 - initial Windows one-file build script and PyInstaller spec added
 - selected PDF removal flow added, including index DB cleanup
 - search options added for ordered match, separator-only matching, and max-gap filtering
+- render and thumbnail disk cache added for reuse across app restarts
+- application theme is now fixed to a light palette regardless of OS dark mode
+- theme option added with Light, Dark, and System modes persisted in settings
 
 ## Implemented So Far
 
@@ -84,7 +87,10 @@ Current working state after that commit:
 - indexing and right-pane page rendering now run through worker tasks
 - right-pane supports `Fit Width`, `Actual Size`, `Zoom In`, and `Zoom Out`
 - thumbnails are generated lazily for visible result rows
+- thumbnails and rendered pages are now also persisted to disk cache
 - left pane shows an explicit no-results state when a search returns zero matches
+- app-wide fixed light theme applied to avoid OS theme drift
+- theme switching menu with persisted app setting implemented
 
 ### Packaging
 
