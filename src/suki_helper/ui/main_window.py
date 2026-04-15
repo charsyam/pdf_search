@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import QSize, QThreadPool, Qt
 from PySide6.QtGui import QAction, QGuiApplication, QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -14,10 +15,12 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSplitter,
+    QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -26,7 +29,7 @@ from PySide6.QtWidgets import (
 from suki_helper.services.document_registry import DocumentRegistryService, RegisteredDocument
 from suki_helper.services.preview_service import PreviewService
 from suki_helper.services.render_service import RenderService
-from suki_helper.services.search_service import SearchResult, SearchService
+from suki_helper.services.search_service import SearchOptions, SearchResult, SearchService
 from suki_helper.workers.indexing_worker import IndexingWorker
 from suki_helper.workers.task_worker import TaskWorker
 
@@ -83,7 +86,15 @@ class MainWindow(QMainWindow):
         container = QWidget()
         layout = QVBoxLayout(container)
 
+        selector_actions = QWidget()
+        selector_actions_layout = QHBoxLayout(selector_actions)
+        selector_actions_layout.setContentsMargins(0, 0, 0, 0)
+        selector_actions_layout.setSpacing(8)
+
         self.open_button = QPushButton("Add PDF")
+        self.remove_button = QPushButton("Remove PDF")
+        selector_actions_layout.addWidget(self.open_button)
+        selector_actions_layout.addWidget(self.remove_button)
         self.pdf_selector = QComboBox()
 
         self.search_input = QLineEdit()
@@ -92,6 +103,24 @@ class MainWindow(QMainWindow):
         self.search_input.setStyleSheet(
             "font-size: 15px; padding: 8px 12px;"
         )
+        self.require_order_checkbox = QCheckBox("Require order")
+        self.require_order_checkbox.setChecked(True)
+        self.separator_only_checkbox = QCheckBox("Separator only")
+        self.max_gap_checkbox = QCheckBox("Use max gap")
+        self.max_gap_spinbox = QSpinBox()
+        self.max_gap_spinbox.setRange(0, 999)
+        self.max_gap_spinbox.setValue(8)
+        self.max_gap_spinbox.setEnabled(False)
+
+        search_options_row = QWidget()
+        search_options_layout = QHBoxLayout(search_options_row)
+        search_options_layout.setContentsMargins(0, 0, 0, 0)
+        search_options_layout.setSpacing(8)
+        search_options_layout.addWidget(self.require_order_checkbox)
+        search_options_layout.addWidget(self.separator_only_checkbox)
+        search_options_layout.addWidget(self.max_gap_checkbox)
+        search_options_layout.addWidget(self.max_gap_spinbox)
+        search_options_layout.addStretch(1)
 
         self.index_status_label = QLabel("Indexing status: idle")
         self.index_progress_bar = QProgressBar()
@@ -109,11 +138,12 @@ class MainWindow(QMainWindow):
         self.left_stack.addWidget(self._build_no_results_state())
         self.left_stack.addWidget(self.result_list)
 
-        layout.addWidget(self.open_button)
+        layout.addWidget(selector_actions)
         layout.addWidget(QLabel("PDF"))
         layout.addWidget(self.pdf_selector)
         layout.addWidget(QLabel("Search"))
         layout.addWidget(self.search_input)
+        layout.addWidget(search_options_row)
         layout.addWidget(self.index_status_label)
         layout.addWidget(self.index_progress_bar)
         layout.addWidget(self.result_count_label)
@@ -234,6 +264,8 @@ class MainWindow(QMainWindow):
         self.add_pdf_action = QAction("Add PDF", self)
         self.add_pdf_action.setShortcut("Ctrl+O")
         file_menu.addAction(self.add_pdf_action)
+        self.remove_pdf_action = QAction("Remove Selected PDF", self)
+        file_menu.addAction(self.remove_pdf_action)
         file_menu.addSeparator()
 
         self.exit_action = QAction("Exit", self)
@@ -258,11 +290,14 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.open_button.clicked.connect(self._open_pdf_files)
+        self.remove_button.clicked.connect(self._remove_selected_pdf)
         self.empty_state_button.clicked.connect(self._open_pdf_files)
         self.add_pdf_action.triggered.connect(self._open_pdf_files)
+        self.remove_pdf_action.triggered.connect(self._remove_selected_pdf)
         self.exit_action.triggered.connect(self.close)
         self.pdf_selector.currentIndexChanged.connect(self._on_selected_document_changed)
         self.search_input.returnPressed.connect(self._run_search)
+        self.max_gap_checkbox.toggled.connect(self.max_gap_spinbox.setEnabled)
         self.result_list.currentRowChanged.connect(self._display_selected_result)
         self.result_list.verticalScrollBar().valueChanged.connect(
             self._request_visible_thumbnails
@@ -313,12 +348,23 @@ class MainWindow(QMainWindow):
             self.pdf_selector.addItem("No indexed PDFs")
             self.pdf_selector.setEnabled(False)
             self.search_input.setEnabled(False)
+            self.remove_button.setEnabled(False)
+            self.remove_pdf_action.setEnabled(False)
             self.result_count_label.setText("Results: 0")
             self.left_stack.setCurrentIndex(0)
+            self.page_title_label.setText("No page selected")
+            self.page_viewer.clear()
+            self.page_viewer.setText("High-resolution page preview will appear here.")
+            self._current_page_pixmap = None
+            self._current_document = None
+            self._current_page_number = None
+            self._update_page_navigation_buttons()
             return
 
         self.pdf_selector.setEnabled(True)
         self.search_input.setEnabled(True)
+        self.remove_button.setEnabled(True)
+        self.remove_pdf_action.setEnabled(True)
         for document in self._documents_by_index:
             self.pdf_selector.addItem(
                 f"{document.file_name} ({document.page_count} pages)"
@@ -336,6 +382,7 @@ class MainWindow(QMainWindow):
         self._results = self._search_service.search(
             file_path=selected_document.file_path,
             query=self.search_input.text(),
+            options=self._current_search_options(),
         )
         self._result_document_path = selected_document.file_path
         self._active_search_token += 1
@@ -348,7 +395,7 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem()
             item.setData(Qt.UserRole, result.page_number)
             item.setData(Qt.UserRole + 1, current_search_token)
-            item.setSizeHint(QSize(0, 280))
+            item.setSizeHint(QSize(0, 340))
             self.result_list.addItem(item)
             widget, thumbnail_label = self._build_result_item_widget(result)
             self._result_thumbnail_labels[row_index] = thumbnail_label
@@ -360,13 +407,11 @@ class MainWindow(QMainWindow):
             self._request_visible_thumbnails()
         else:
             self.left_stack.setCurrentIndex(2)
-            self.page_title_label.setText("No page selected")
-            self._current_page_pixmap = None
-            self._current_document = None
-            self._current_page_number = None
             self._update_page_navigation_buttons()
-            self.page_viewer.clear()
-            self.page_viewer.setText("No search result. Try another keyword.")
+            self.statusBar().showMessage(
+                "No search result. You can still browse pages on the right.",
+                5000,
+            )
 
     def _display_selected_result(self, row_index: int) -> None:
         if row_index < 0 or row_index >= len(self._results):
@@ -384,6 +429,16 @@ class MainWindow(QMainWindow):
         if current_index < 0 or current_index >= len(self._documents_by_index):
             return None
         return self._documents_by_index[current_index]
+
+    def _current_search_options(self) -> SearchOptions:
+        max_gap_chars: int | None = None
+        if self.max_gap_checkbox.isChecked():
+            max_gap_chars = int(self.max_gap_spinbox.value())
+        return SearchOptions(
+            require_ordered_match=self.require_order_checkbox.isChecked(),
+            separator_only_match=self.separator_only_checkbox.isChecked(),
+            max_gap_chars=max_gap_chars,
+        )
 
     def _request_visible_thumbnails(self) -> None:
         if self._result_document_path is None:
@@ -447,8 +502,10 @@ class MainWindow(QMainWindow):
 
     def _set_busy_state(self, is_busy: bool, message: str) -> None:
         self.open_button.setEnabled(not is_busy)
+        self.remove_button.setEnabled(not is_busy and bool(self._documents_by_index))
         self.empty_state_button.setEnabled(not is_busy)
         self.add_pdf_action.setEnabled(not is_busy)
+        self.remove_pdf_action.setEnabled(not is_busy and bool(self._documents_by_index))
         self.statusBar().showMessage(message, 5000 if not is_busy else 0)
 
     def _on_indexing_progress(self, completed: int, total: int, current_name: str) -> None:
@@ -580,6 +637,35 @@ class MainWindow(QMainWindow):
         self._reset_selected_document_view(clear_query=True)
         self._start_page_render(document, 1)
 
+    def _remove_selected_pdf(self) -> None:
+        document = self._selected_document()
+        if document is None:
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Remove PDF",
+            (
+                f"Remove '{document.file_name}' from the indexed PDF list?\n\n"
+                "Its search index database will also be deleted."
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        was_removed = self._document_registry.remove_pdf(document.file_path)
+        if not was_removed:
+            self.statusBar().showMessage("Selected PDF could not be removed.", 5000)
+            return
+
+        self._refresh_document_selector()
+        self.statusBar().showMessage(
+            f"Removed indexed PDF: {document.file_name}",
+            5000,
+        )
+
     def _reset_selected_document_view(self, *, clear_query: bool) -> None:
         self._results = []
         self._result_document_path = None
@@ -601,23 +687,39 @@ class MainWindow(QMainWindow):
     def _build_result_item_widget(self, result: SearchResult) -> tuple[QWidget, QLabel]:
         container = QWidget()
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(12)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(14)
+
+        container.setStyleSheet(
+            "background: #faf8f2; border: 1px solid #ddd6c8; border-radius: 10px;"
+        )
 
         thumbnail_label = QLabel()
-        thumbnail_label.setFixedSize(180, 240)
+        thumbnail_label.setFixedSize(220, 300)
         thumbnail_label.setAlignment(Qt.AlignCenter)
-        thumbnail_label.setStyleSheet("background: #f4f4f4; border: 1px solid #ddd;")
+        thumbnail_label.setStyleSheet(
+            "background: #f4f4f4; border: 1px solid #d4d4d4; border-radius: 8px;"
+        )
         thumbnail_label.setText("Loading...")
+
+        text_panel = QWidget()
+        text_panel.setStyleSheet(
+            "background: #fffdf8; border: 1px solid #e2dccf; border-radius: 8px;"
+        )
+        text_panel_layout = QVBoxLayout(text_panel)
+        text_panel_layout.setContentsMargins(14, 14, 14, 14)
+        text_panel_layout.setSpacing(8)
 
         text_label = QLabel()
         text_label.setWordWrap(True)
         text_label.setTextFormat(Qt.RichText)
         text_label.setTextInteractionFlags(Qt.NoTextInteraction)
+        text_label.setMinimumWidth(260)
         text_label.setText(self._build_highlighted_result_html(result))
+        text_panel_layout.addWidget(text_label)
 
         layout.addWidget(thumbnail_label)
-        layout.addWidget(text_label, 1)
+        layout.addWidget(text_panel, 1)
         return container, thumbnail_label
 
     def _build_highlighted_result_html(self, result: SearchResult) -> str:
@@ -626,8 +728,10 @@ class MainWindow(QMainWindow):
         after = html.escape(result.context_after)
         return (
             f"<div>"
-            f"<div style='font-weight:600; margin-bottom:6px;'>Page {result.page_number}</div>"
-            f"<div style='line-height:1.5;'>"
+            f"<div style='font-size: 16px; font-weight:700; margin-bottom:10px; color:#2f2a22;'>"
+            f"Page {result.page_number}"
+            f"</div>"
+            f"<div style='line-height:1.6; color:#3b3428;'>"
             f"{before}"
             f"<span style='background:#ffe58f; color:#222; font-weight:700; padding:1px 2px;'>"
             f"{match}"

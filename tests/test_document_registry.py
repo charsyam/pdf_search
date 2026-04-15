@@ -29,3 +29,20 @@ def test_document_registry_registers_pdf_and_lists_it(tmp_path: Path) -> None:
     assert registered.status == "indexed"
     assert len(documents) == 1
     assert documents[0].file_name == "sample.pdf"
+
+
+def test_document_registry_removes_pdf_and_index_db(tmp_path: Path) -> None:
+    paths = bootstrap_storage(root_dir=tmp_path)
+    service = DocumentRegistryService(paths)
+    pdf_path = tmp_path / "sample.pdf"
+    _create_sample_pdf(pdf_path)
+
+    service.register_pdf(pdf_path)
+    listed_document = service.list_documents()[0]
+    removed = service.remove_pdf(pdf_path)
+
+    assert removed is True
+    assert service.list_documents() == []
+    index_files = list(paths.indexes_dir.glob("*.db"))
+    assert index_files == []
+    assert listed_document.file_name == "sample.pdf"

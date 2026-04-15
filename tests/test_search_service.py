@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from suki_helper.services.search_service import SearchService
+from suki_helper.services.search_service import SearchOptions, SearchService
 from suki_helper.storage.db import AppPaths
 
 
@@ -67,9 +67,9 @@ def test_search_service_returns_ranked_matches_for_selected_pdf(tmp_path: Path) 
     service = SearchService(paths)
     results = service.search(file_path=pdf_path, query="haeoe dongpo")
 
-    assert [result.page_number for result in results] == [3, 2, 4, 1]
+    assert [result.page_number for result in results] == [3, 2, 4]
     assert results[0].adjacent_token_match is True
-    assert results[-1].ordered_token_match is False
+    assert results[-1].ordered_token_match is True
 
 
 def test_search_service_prefers_closer_ordered_matches(tmp_path: Path) -> None:
@@ -122,3 +122,45 @@ def test_search_service_returns_empty_for_blank_query(tmp_path: Path) -> None:
     service = SearchService(paths)
 
     assert service.search(file_path=pdf_path, query="   ") == []
+
+
+def test_search_service_separator_only_filters_non_separator_gaps(tmp_path: Path) -> None:
+    paths, pdf_path = _register_indexed_document(
+        tmp_path,
+        file_name="sample.pdf",
+        pages=[
+            "haeoe dongpo",
+            "haeoe-dongpo",
+            "haeoe oe-dong dongpo",
+        ],
+    )
+
+    service = SearchService(paths)
+    results = service.search(
+        file_path=pdf_path,
+        query="haeoe dongpo",
+        options=SearchOptions(separator_only_match=True),
+    )
+
+    assert [result.page_number for result in results] == [1, 2]
+
+
+def test_search_service_max_gap_filters_far_apart_matches(tmp_path: Path) -> None:
+    paths, pdf_path = _register_indexed_document(
+        tmp_path,
+        file_name="sample.pdf",
+        pages=[
+            "alpha beta",
+            "alpha      beta",
+            "alpha xxxxxxxxx beta",
+        ],
+    )
+
+    service = SearchService(paths)
+    results = service.search(
+        file_path=pdf_path,
+        query="alpha beta",
+        options=SearchOptions(max_gap_chars=6),
+    )
+
+    assert [result.page_number for result in results] == [1, 2]

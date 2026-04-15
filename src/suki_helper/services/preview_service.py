@@ -19,10 +19,10 @@ class PreviewService:
         *,
         file_path: Path,
         page_number: int,
-        width: int = 180,
-        dpi: int = 72,
+        width: int = 240,
+        dpi: int = 132,
     ) -> QPixmap:
-        cache_key = (str(file_path), page_number, width)
+        cache_key = (str(file_path), page_number, width, dpi)
         cached = self._pixmap_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -42,9 +42,9 @@ class PreviewService:
         file_path: Path,
         page_number: int,
         width: int = 120,
-        dpi: int = 72,
+        dpi: int = 132,
     ) -> QIcon:
-        cache_key = (str(file_path), page_number, width)
+        cache_key = (str(file_path), page_number, width, dpi)
         cached = self._icon_cache.get(cache_key)
         if cached is not None:
             return cached

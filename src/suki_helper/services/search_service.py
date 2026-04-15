@@ -39,11 +39,25 @@ class SearchResult:
     first_match_offset: int
 
 
+@dataclass(frozen=True)
+class SearchOptions:
+    require_ordered_match: bool = True
+    separator_only_match: bool = False
+    max_gap_chars: int | None = None
+
+
 class SearchService:
     def __init__(self, paths: AppPaths) -> None:
         self._paths = paths
 
-    def search(self, *, file_path: Path, query: str) -> list[SearchResult]:
+    def search(
+        self,
+        *,
+        file_path: Path,
+        query: str,
+        options: SearchOptions | None = None,
+    ) -> list[SearchResult]:
+        resolved_options = options or SearchOptions()
         normalized_query = normalize_for_search(query)
         if not normalized_query.normalized_text:
             return []
@@ -91,6 +105,9 @@ class SearchService:
                 query_tokens=[token for token in query.split() if token],
                 gram_overlap_score=gram_overlap_score,
                 rarity_score=rarity_score,
+                require_ordered_match=resolved_options.require_ordered_match,
+                separator_only_match=resolved_options.separator_only_match,
+                max_gap_chars=resolved_options.max_gap_chars,
             )
             if ranked_match is None:
                 continue

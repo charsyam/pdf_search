@@ -31,6 +31,7 @@ class OrderedTokenSpan:
     span_end: int
     total_gap_chars: int
     token_boundaries: list[tuple[int, int]]
+    separator_only: bool
 
 
 def find_compact_match(
@@ -53,13 +54,21 @@ def score_ranked_match(
     query_tokens: list[str],
     gram_overlap_score: float,
     rarity_score: float,
+    require_ordered_match: bool = False,
+    separator_only_match: bool = False,
+    max_gap_chars: int | None = None,
 ) -> RankedMatch | None:
     compact_span = find_compact_match(normalized_page_text, normalized_query_text)
     compact_start = compact_span[0] if compact_span is not None else -1
     compact_end = compact_span[1] if compact_span is not None else -1
     exact_compact_match = compact_span is not None
 
-    ordered_span = _find_best_ordered_token_span(original_text, query_tokens)
+    ordered_span = _find_best_ordered_token_span(
+        original_text,
+        query_tokens,
+        separator_only_match=separator_only_match,
+        max_gap_chars=max_gap_chars,
+    )
     adjacent_token_match = False
     ordered_token_match = False
     adjacency_rank = 0
@@ -81,6 +90,9 @@ def score_ranked_match(
         proximity_score = 1.0 / float(1 + ordered_gap_chars)
         if first_match_offset < 0:
             first_match_offset = ordered_span_start
+
+    if require_ordered_match and not exact_compact_match and not ordered_token_match:
+        return None
 
     if first_match_offset < 0:
         if not query_tokens:
@@ -150,6 +162,9 @@ def sort_key(
 def _find_best_ordered_token_span(
     original_text: str,
     query_tokens: list[str],
+    *,
+    separator_only_match: bool,
+    max_gap_chars: int | None,
 ) -> OrderedTokenSpan | None:
     if not query_tokens:
         return None
@@ -183,7 +198,13 @@ def _find_best_ordered_token_span(
                 span_end=token_boundaries[-1][1],
                 total_gap_chars=total_gap_chars,
                 token_boundaries=list(token_boundaries),
+                separator_only=_is_separator_only_boundaries(
+                    original_text,
+                    token_boundaries,
+                ),
             )
+            if separator_only_match and not candidate.separator_only:
+                return
             if _is_better_ordered_span(candidate, best_span):
                 best_span = candidate
             return
@@ -195,6 +216,8 @@ def _find_best_ordered_token_span(
             next_gap = total_gap_chars
             if token_boundaries:
                 next_gap += start - previous_end
+                if max_gap_chars is not None and next_gap > max_gap_chars:
+                    continue
 
             if best_span is not None and next_gap > best_span.total_gap_chars:
                 continue
@@ -250,6 +273,23 @@ def _is_punctuation_only(text: str) -> bool:
         and (not character.isspace())
         and character in SEPARATOR_CHARACTERS
         for character in text
+    )
+
+
+def _is_separator_only_boundaries(
+    original_text: str,
+    token_boundaries: list[tuple[int, int]],
+) -> bool:
+    if len(token_boundaries) <= 1:
+        return True
+
+    gap_segments = [
+        original_text[token_boundaries[index][1] : token_boundaries[index + 1][0]]
+        for index in range(len(token_boundaries) - 1)
+    ]
+    return all(
+        segment == "" or all(character in SEPARATOR_CHARACTERS for character in segment)
+        for segment in gap_segments
     )
 
 

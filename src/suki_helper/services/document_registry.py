@@ -7,6 +7,7 @@ from pathlib import Path
 from suki_helper.pdf.extractor import extract_document
 from suki_helper.storage.db import AppPaths, DocumentFingerprint, connect_sqlite
 from suki_helper.storage.repositories import (
+    delete_document_record,
     rebuild_index_db,
     update_document_indexed_state,
     upsert_document_record,
@@ -66,3 +67,12 @@ class DocumentRegistryService:
             )
             for row in rows
         ]
+
+    def remove_pdf(self, file_path: Path) -> bool:
+        removed_index_db_path = delete_document_record(self._paths, file_path)
+        if removed_index_db_path is None:
+            return False
+
+        if removed_index_db_path.exists():
+            removed_index_db_path.unlink()
+        return True

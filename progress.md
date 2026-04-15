@@ -31,6 +31,8 @@ Current working state after that commit:
 - ordered-token ranking now strongly prefers closer matches over far-apart occurrences
 - default storage now uses a per-user app data directory for packaged builds
 - initial Windows one-file build script and PyInstaller spec added
+- selected PDF removal flow added, including index DB cleanup
+- search options added for ordered match, separator-only matching, and max-gap filtering
 
 ## Implemented So Far
 
@@ -58,6 +60,7 @@ Current working state after that commit:
 - exact compact-match verification implemented
 - order-aware ranking implemented
 - ordered-token proximity ranking implemented
+- ordered-match filtering options implemented
 - page-frequency-based rarity weighting implemented
 - snippet/context extraction implemented
 - default per-user app data storage implemented
@@ -67,6 +70,7 @@ Current working state after that commit:
 - startup empty state implemented
 - PDF add flow implemented
 - indexed PDF selection implemented
+- selected PDF removal implemented
 - switching the selected PDF resets the previous search results and page preview
 - selecting a PDF immediately shows page 1 in the right pane
 - indexing progress label and progress bar implemented

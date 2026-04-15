@@ -143,6 +143,24 @@ def get_document_record_by_path(paths: AppPaths, file_path: Path) -> sqlite3.Row
         ).fetchone()
 
 
+def delete_document_record(paths: AppPaths, file_path: Path) -> Path | None:
+    with connect_sqlite(paths.catalog_db_path) as connection:
+        row = connection.execute(
+            "SELECT index_db_path FROM documents WHERE file_path = ?",
+            (str(file_path),),
+        ).fetchone()
+        if row is None:
+            return None
+
+        connection.execute(
+            "DELETE FROM documents WHERE file_path = ?",
+            (str(file_path),),
+        )
+        connection.commit()
+
+    return Path(row["index_db_path"])
+
+
 def get_index_page_candidates(index_db_path: Path, grams: list[str]) -> list[sqlite3.Row]:
     if not grams:
         return []
