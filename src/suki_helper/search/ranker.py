@@ -13,14 +13,30 @@ class RankedMatch:
     adjacent_token_match: bool
     ordered_token_match: bool
     adjacency_rank: int
+    ordered_gap_chars: int
+    ordered_span_length: int
+    proximity_score: float
     gram_overlap_score: float
     rarity_score: float
     first_match_offset: int
     compact_start: int
     compact_end: int
+    ordered_span_start: int
+    ordered_span_end: int
 
 
-def find_compact_match(normalized_page_text: str, normalized_query_text: str) -> tuple[int, int] | None:
+@dataclass(frozen=True)
+class OrderedTokenSpan:
+    span_start: int
+    span_end: int
+    total_gap_chars: int
+    token_boundaries: list[tuple[int, int]]
+
+
+def find_compact_match(
+    normalized_page_text: str,
+    normalized_query_text: str,
+) -> tuple[int, int] | None:
     if not normalized_query_text:
         return None
     start = normalized_page_text.find(normalized_query_text)
@@ -43,18 +59,28 @@ def score_ranked_match(
     compact_end = compact_span[1] if compact_span is not None else -1
     exact_compact_match = compact_span is not None
 
-    ordered_span = _find_ordered_token_span(original_text, query_tokens)
+    ordered_span = _find_best_ordered_token_span(original_text, query_tokens)
     adjacent_token_match = False
     ordered_token_match = False
     adjacency_rank = 0
+    ordered_gap_chars = 10**9
+    ordered_span_length = 10**9
+    proximity_score = 0.0
+    ordered_span_start = -1
+    ordered_span_end = -1
     first_match_offset = compact_start if exact_compact_match else -1
 
     if ordered_span is not None:
         ordered_token_match = True
-        adjacency_rank = _adjacency_rank(original_text, ordered_span, query_tokens)
+        adjacency_rank = _adjacency_rank(original_text, ordered_span.token_boundaries)
         adjacent_token_match = adjacency_rank >= 2
+        ordered_gap_chars = ordered_span.total_gap_chars
+        ordered_span_start = ordered_span.span_start
+        ordered_span_end = ordered_span.span_end
+        ordered_span_length = ordered_span_end - ordered_span_start
+        proximity_score = 1.0 / float(1 + ordered_gap_chars)
         if first_match_offset < 0:
-            first_match_offset = ordered_span[0]
+            first_match_offset = ordered_span_start
 
     if first_match_offset < 0:
         if not query_tokens:
@@ -71,11 +97,16 @@ def score_ranked_match(
         adjacent_token_match=adjacent_token_match,
         ordered_token_match=ordered_token_match,
         adjacency_rank=adjacency_rank,
+        ordered_gap_chars=ordered_gap_chars,
+        ordered_span_length=ordered_span_length,
+        proximity_score=proximity_score,
         gram_overlap_score=gram_overlap_score,
         rarity_score=rarity_score,
         first_match_offset=first_match_offset,
         compact_start=compact_start,
         compact_end=compact_end,
+        ordered_span_start=ordered_span_start,
+        ordered_span_end=ordered_span_end,
     )
 
 
@@ -91,15 +122,23 @@ def compute_rarity_score(
     score = 0.0
     for gram in matched_grams:
         document_frequency = gram_document_frequencies.get(gram, total_pages)
-        score += math.log(((total_pages - document_frequency + 0.5) / (document_frequency + 0.5)) + 1.0)
+        score += math.log(
+            ((total_pages - document_frequency + 0.5) / (document_frequency + 0.5))
+            + 1.0
+        )
     return score
 
 
-def sort_key(match: RankedMatch, page_number: int) -> tuple[int, int, int, int, float, float, int, int]:
+def sort_key(
+    match: RankedMatch,
+    page_number: int,
+) -> tuple[int, float, int, int, int, int, float, float, int, int]:
     return (
-        match.adjacency_rank,
         int(match.exact_compact_match),
-        int(match.adjacent_token_match),
+        match.proximity_score,
+        -match.ordered_gap_chars,
+        -match.ordered_span_length,
+        match.adjacency_rank,
         int(match.ordered_token_match),
         match.rarity_score,
         match.gram_overlap_score,
@@ -108,7 +147,10 @@ def sort_key(match: RankedMatch, page_number: int) -> tuple[int, int, int, int, 
     )
 
 
-def _find_ordered_token_span(original_text: str, query_tokens: list[str]) -> tuple[int, int] | None:
+def _find_best_ordered_token_span(
+    original_text: str,
+    query_tokens: list[str],
+) -> OrderedTokenSpan | None:
     if not query_tokens:
         return None
 
@@ -117,49 +159,81 @@ def _find_ordered_token_span(original_text: str, query_tokens: list[str]) -> tup
     if not lowered_tokens:
         return None
 
-    search_start = 0
-    span_start: int | None = None
-    span_end: int | None = None
+    token_occurrences = [
+        _find_token_occurrences(lowered_text, token) for token in lowered_tokens
+    ]
+    if any(not occurrences for occurrences in token_occurrences):
+        return None
 
-    for token in lowered_tokens:
-        position = lowered_text.find(token, search_start)
-        if position < 0:
-            return None
-        if span_start is None:
-            span_start = position
-        span_end = position + len(token)
-        search_start = span_end
+    best_span: OrderedTokenSpan | None = None
 
-    assert span_start is not None
-    assert span_end is not None
-    return span_start, span_end
+    def search(
+        *,
+        token_index: int,
+        previous_end: int,
+        span_start: int,
+        total_gap_chars: int,
+        token_boundaries: list[tuple[int, int]],
+    ) -> None:
+        nonlocal best_span
+
+        if token_index >= len(token_occurrences):
+            candidate = OrderedTokenSpan(
+                span_start=span_start,
+                span_end=token_boundaries[-1][1],
+                total_gap_chars=total_gap_chars,
+                token_boundaries=list(token_boundaries),
+            )
+            if _is_better_ordered_span(candidate, best_span):
+                best_span = candidate
+            return
+
+        for start, end in token_occurrences[token_index]:
+            if start < previous_end:
+                continue
+
+            next_gap = total_gap_chars
+            if token_boundaries:
+                next_gap += start - previous_end
+
+            if best_span is not None and next_gap > best_span.total_gap_chars:
+                continue
+
+            token_boundaries.append((start, end))
+            search(
+                token_index=token_index + 1,
+                previous_end=end,
+                span_start=span_start,
+                total_gap_chars=next_gap,
+                token_boundaries=token_boundaries,
+            )
+            token_boundaries.pop()
+
+    for start, end in token_occurrences[0]:
+        search(
+            token_index=1,
+            previous_end=end,
+            span_start=start,
+            total_gap_chars=0,
+            token_boundaries=[(start, end)],
+        )
+
+    return best_span
 
 
 def _adjacency_rank(
     original_text: str,
-    ordered_span: tuple[int, int],
-    query_tokens: list[str],
+    token_boundaries: list[tuple[int, int]],
 ) -> int:
-    lowered_text = original_text.lower()
-    lowered_tokens = [token.lower() for token in query_tokens if token]
-    if not lowered_tokens:
+    if not token_boundaries:
         return 0
 
-    boundaries: list[tuple[int, int]] = []
-    search_start = ordered_span[0]
-    for token in lowered_tokens:
-        position = lowered_text.find(token, search_start)
-        if position < 0:
-            return 0
-        boundaries.append((position, position + len(token)))
-        search_start = position + len(token)
-
-    if len(boundaries) == 1:
+    if len(token_boundaries) == 1:
         return 3
 
     gap_segments = [
-        original_text[boundaries[index][1] : boundaries[index + 1][0]]
-        for index in range(len(boundaries) - 1)
+        original_text[token_boundaries[index][1] : token_boundaries[index + 1][0]]
+        for index in range(len(token_boundaries) - 1)
     ]
     if all(segment == "" for segment in gap_segments):
         return 4
@@ -172,6 +246,39 @@ def _adjacency_rank(
 
 def _is_punctuation_only(text: str) -> bool:
     return all(
-        (not character.isalnum()) and (not character.isspace()) and character in SEPARATOR_CHARACTERS
+        (not character.isalnum())
+        and (not character.isspace())
+        and character in SEPARATOR_CHARACTERS
         for character in text
     )
+
+
+def _find_token_occurrences(text: str, token: str) -> list[tuple[int, int]]:
+    occurrences: list[tuple[int, int]] = []
+    search_start = 0
+    while True:
+        position = text.find(token, search_start)
+        if position < 0:
+            return occurrences
+        occurrences.append((position, position + len(token)))
+        search_start = position + 1
+
+
+def _is_better_ordered_span(
+    candidate: OrderedTokenSpan,
+    current: OrderedTokenSpan | None,
+) -> bool:
+    if current is None:
+        return True
+
+    candidate_key = (
+        candidate.total_gap_chars,
+        candidate.span_end - candidate.span_start,
+        candidate.span_start,
+    )
+    current_key = (
+        current.total_gap_chars,
+        current.span_end - current.span_start,
+        current.span_start,
+    )
+    return candidate_key < current_key

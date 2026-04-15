@@ -28,6 +28,7 @@ Current working state after that commit:
 - left search results now visually highlight the matched text
 - changing the selected PDF now resets the old search state
 - selecting a PDF now auto-renders its first page in the right pane
+- ordered-token ranking now strongly prefers closer matches over far-apart occurrences
 
 ## Implemented So Far
 
@@ -54,6 +55,7 @@ Current working state after that commit:
 - selected-PDF-only search implemented
 - exact compact-match verification implemented
 - order-aware ranking implemented
+- ordered-token proximity ranking implemented
 - page-frequency-based rarity weighting implemented
 - snippet/context extraction implemented
 

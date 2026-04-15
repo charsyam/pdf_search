@@ -143,14 +143,12 @@ def _build_result_context(
     normalized_query: str,
     query_tokens: list[str],
 ):
-    if ranked_match.ordered_token_match:
-        span = _find_original_span_for_tokens(original_text, query_tokens)
-        if span is not None:
-            return extract_context(
-                original_text,
-                start_offset=span[0],
-                end_offset=span[1],
-            )
+    if ranked_match.ordered_token_match and ranked_match.ordered_span_start >= 0:
+        return extract_context(
+            original_text,
+            start_offset=ranked_match.ordered_span_start,
+            end_offset=ranked_match.ordered_span_end,
+        )
 
     start_offset = max(0, ranked_match.first_match_offset)
     if ranked_match.exact_compact_match and normalized_query:
@@ -164,23 +162,3 @@ def _build_result_context(
         start_offset=start_offset,
         end_offset=end_offset,
     )
-
-
-def _find_original_span_for_tokens(original_text: str, query_tokens: list[str]) -> tuple[int, int] | None:
-    lowered_text = original_text.lower()
-    span_start: int | None = None
-    span_end: int | None = None
-    search_start = 0
-
-    for token in [token.lower() for token in query_tokens if token]:
-        position = lowered_text.find(token, search_start)
-        if position < 0:
-            return None
-        if span_start is None:
-            span_start = position
-        span_end = position + len(token)
-        search_start = span_end
-
-    if span_start is None or span_end is None:
-        return None
-    return span_start, span_end

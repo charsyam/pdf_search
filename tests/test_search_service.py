@@ -67,9 +67,26 @@ def test_search_service_returns_ranked_matches_for_selected_pdf(tmp_path: Path) 
     service = SearchService(paths)
     results = service.search(file_path=pdf_path, query="haeoe dongpo")
 
-    assert [result.page_number for result in results] == [2, 3, 4, 1]
+    assert [result.page_number for result in results] == [3, 2, 4, 1]
     assert results[0].adjacent_token_match is True
     assert results[-1].ordered_token_match is False
+
+
+def test_search_service_prefers_closer_ordered_matches(tmp_path: Path) -> None:
+    paths, pdf_path = _register_indexed_document(
+        tmp_path,
+        file_name="sample.pdf",
+        pages=[
+            "alpha          beta",
+            "alpha beta",
+            "alpha   beta",
+        ],
+    )
+
+    service = SearchService(paths)
+    results = service.search(file_path=pdf_path, query="alpha beta")
+
+    assert [result.page_number for result in results] == [2, 3, 1]
 
 
 def test_search_service_scopes_search_to_selected_pdf(tmp_path: Path) -> None:
