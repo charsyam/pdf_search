@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QThreadPool, Qt
-from PySide6.QtGui import QAction, QImage, QPixmap
+from PySide6.QtGui import QAction, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -46,9 +46,11 @@ class MainWindow(QMainWindow):
         self._results: list[SearchResult] = []
         self._thread_pool = QThreadPool.globalInstance()
         self._active_render_token = 0
+        self._active_search_token = 0
         self._current_page_pixmap: QPixmap | None = None
         self._zoom_factor = 1.0
         self._fit_width_mode = True
+        self._result_document_path: Path | None = None
         self.setWindowTitle("suki-helper")
         self.resize(1400, 900)
         self._build_ui()
@@ -169,6 +171,9 @@ class MainWindow(QMainWindow):
         self.exit_action.triggered.connect(self.close)
         self.search_input.returnPressed.connect(self._run_search)
         self.result_list.currentRowChanged.connect(self._display_selected_result)
+        self.result_list.verticalScrollBar().valueChanged.connect(
+            self._request_visible_thumbnails
+        )
         self.fit_width_button.clicked.connect(self._set_fit_width_mode)
         self.actual_size_button.clicked.connect(self._set_actual_size_mode)
         self.zoom_in_button.clicked.connect(self._zoom_in)
@@ -231,24 +236,26 @@ class MainWindow(QMainWindow):
             file_path=selected_document.file_path,
             query=self.search_input.text(),
         )
+        self._result_document_path = selected_document.file_path
+        self._active_search_token += 1
+        current_search_token = self._active_search_token
         self.result_list.clear()
         self.left_stack.setCurrentIndex(1)
 
         for result in self._results:
-            icon = self._preview_service.build_result_icon(
-                file_path=selected_document.file_path,
-                page_number=result.page_number,
-            )
             item = QListWidgetItem(
                 f"Page {result.page_number}: "
                 f"{result.context_before}[{result.context_match}]{result.context_after}"
             )
-            item.setIcon(icon)
+            item.setData(Qt.UserRole, result.page_number)
+            item.setData(Qt.UserRole + 1, current_search_token)
+            item.setIcon(QIcon())
             self.result_list.addItem(item)
 
         self.result_count_label.setText(f"Results: {len(self._results)}")
         if self._results:
             self.result_list.setCurrentRow(0)
+            self._request_visible_thumbnails()
         else:
             self.page_title_label.setText("No page selected")
             self._current_page_pixmap = None
@@ -290,6 +297,38 @@ class MainWindow(QMainWindow):
         if current_index < 0 or current_index >= len(self._documents_by_index):
             return None
         return self._documents_by_index[current_index]
+
+    def _request_visible_thumbnails(self) -> None:
+        if self._result_document_path is None:
+            return
+        viewport = self.result_list.viewport()
+        if viewport is None:
+            return
+
+        for row_index in range(self.result_list.count()):
+            item = self.result_list.item(row_index)
+            if item is None:
+                continue
+            item_rect = self.result_list.visualItemRect(item)
+            if not item_rect.isValid():
+                continue
+            if item_rect.bottom() < 0 or item_rect.top() > viewport.height():
+                continue
+
+            page_number = item.data(Qt.UserRole)
+            search_token = item.data(Qt.UserRole + 1)
+            if not isinstance(page_number, int) or not isinstance(search_token, int):
+                continue
+            if not item.icon().isNull():
+                continue
+            if search_token != self._active_search_token:
+                continue
+
+            icon = self._preview_service.build_result_icon(
+                file_path=self._result_document_path,
+                page_number=page_number,
+            )
+            item.setIcon(icon)
 
     def _on_page_render_finished(self, payload: object) -> None:
         render_token, page_number, png_bytes = payload
