@@ -43,6 +43,10 @@ If any of steps 2 through 8 are weak, the UI will look complete but the product 
 
 ### Phase 0. Repository Foundation
 
+Status:
+
+- completed
+
 Objective:
 
 - create a stable development baseline
@@ -75,6 +79,10 @@ Exit criteria:
 
 ### Phase 1. Application Skeleton
 
+Status:
+
+- completed
+
 Objective:
 
 - establish the basic desktop app structure and service boundaries
@@ -106,6 +114,10 @@ Exit criteria:
 - PDF selection UI placeholder exists
 
 ### Phase 2. Storage Foundation
+
+Status:
+
+- completed
 
 Objective:
 
@@ -141,6 +153,10 @@ Exit criteria:
 
 ### Phase 3. PDF Extraction Core
 
+Status:
+
+- completed
+
 Objective:
 
 - extract reliable page-level text and page metadata
@@ -174,6 +190,10 @@ Exit criteria:
 
 ### Phase 4. Normalization and Offset Mapping
 
+Status:
+
+- completed
+
 Objective:
 
 - produce deterministic searchable text and reversible position mapping
@@ -206,6 +226,10 @@ Exit criteria:
 
 ### Phase 5. 2-Gram Index Construction
 
+Status:
+
+- completed
+
 Objective:
 
 - build the fast candidate retrieval layer
@@ -237,6 +261,10 @@ Exit criteria:
 - a selected PDF can return candidate page ids from query grams
 
 ### Phase 6. Search Core
+
+Status:
+
+- completed
 
 Objective:
 
@@ -271,6 +299,10 @@ Exit criteria:
 
 ### Phase 7. Ranking and Snippet Logic
 
+Status:
+
+- completed
+
 Objective:
 
 - improve search quality to match the product expectations
@@ -304,6 +336,10 @@ Exit criteria:
 
 ### Phase 8. PDF Registration and Indexing Workflow
 
+Status:
+
+- completed for synchronous local indexing flow
+
 Objective:
 
 - connect PDF loading to background indexing and catalog updates
@@ -336,6 +372,10 @@ Exit criteria:
 - user can load PDFs and later select an indexed one for search
 
 ### Phase 9. Result List UI
+
+Status:
+
+- completed for initial searchable UI
 
 Objective:
 
@@ -371,6 +411,10 @@ Exit criteria:
 
 ### Phase 10. Thumbnail Pipeline
 
+Status:
+
+- pending
+
 Objective:
 
 - render low-resolution page previews efficiently
@@ -402,6 +446,10 @@ Exit criteria:
 
 ### Phase 11. Detail Viewer Pipeline
 
+Status:
+
+- in progress
+
 Objective:
 
 - show high-resolution page image for the clicked result
@@ -431,6 +479,10 @@ Exit criteria:
 - clicking a result shows the correct page image in the right pane
 
 ### Phase 12. Performance and Reliability Pass
+
+Status:
+
+- pending
 
 Objective:
 
@@ -496,9 +548,9 @@ Thumbnail work is important, but the right-pane detail flow is slightly more cri
 
 The next three tasks should be:
 
-1. add repository scaffolding and dependency manifest
-2. implement `catalog.db` and per-PDF index DB bootstrap
-3. implement PDF extraction plus normalization tests
+1. implement PDF page rendering service for the right pane
+2. implement low-resolution thumbnail generation and list binding
+3. add background workers so indexing and rendering do not block the UI
 
 Reason:
 

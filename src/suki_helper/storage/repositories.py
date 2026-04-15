@@ -133,3 +133,43 @@ def update_document_indexed_state(
             (page_count, str(file_path)),
         )
         connection.commit()
+
+
+def get_document_record_by_path(paths: AppPaths, file_path: Path) -> sqlite3.Row | None:
+    with connect_sqlite(paths.catalog_db_path) as connection:
+        return connection.execute(
+            "SELECT * FROM documents WHERE file_path = ?",
+            (str(file_path),),
+        ).fetchone()
+
+
+def get_index_page_candidates(index_db_path: Path, grams: list[str]) -> list[sqlite3.Row]:
+    if not grams:
+        return []
+
+    placeholders = ", ".join("?" for _ in grams)
+    query = f"""
+        SELECT
+          page_id,
+          COUNT(DISTINCT gram) AS matched_grams
+        FROM gram_postings
+        WHERE gram IN ({placeholders})
+        GROUP BY page_id
+        ORDER BY matched_grams DESC, page_id ASC
+    """
+    with connect_sqlite(index_db_path) as connection:
+        return connection.execute(query, grams).fetchall()
+
+
+def get_index_pages_by_ids(index_db_path: Path, page_ids: list[int]) -> list[sqlite3.Row]:
+    if not page_ids:
+        return []
+
+    placeholders = ", ".join("?" for _ in page_ids)
+    query = f"""
+        SELECT page_id, page_number, original_text, normalized_text, offset_map_blob
+        FROM pages
+        WHERE page_id IN ({placeholders})
+    """
+    with connect_sqlite(index_db_path) as connection:
+        return connection.execute(query, page_ids).fetchall()
