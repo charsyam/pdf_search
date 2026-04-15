@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 from PySide6.QtCore import QSize, QThreadPool, Qt
-from PySide6.QtGui import QAction, QIcon, QImage, QPixmap
+from PySide6.QtGui import QAction, QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -50,22 +51,31 @@ class MainWindow(QMainWindow):
         self._active_render_token = 0
         self._active_search_token = 0
         self._current_page_pixmap: QPixmap | None = None
+        self._current_document: RegisteredDocument | None = None
+        self._current_page_number: int | None = None
         self._zoom_factor = 1.0
         self._fit_width_mode = True
         self._result_document_path: Path | None = None
+        self._result_thumbnail_labels: dict[int, QLabel] = {}
         self.setWindowTitle("suki-helper")
-        self.resize(1400, 900)
+        self._configure_initial_window_size()
         self._build_ui()
         self._build_menu()
         self._connect_signals()
         self._refresh_document_selector()
+        self._update_page_navigation_buttons()
 
     def _build_ui(self) -> None:
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._build_left_pane())
-        splitter.addWidget(self._build_right_pane())
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 5)
+        left_pane = self._build_left_pane()
+        right_pane = self._build_right_pane()
+        left_pane.setMinimumWidth(420)
+        right_pane.setMinimumWidth(900)
+        splitter.addWidget(left_pane)
+        splitter.addWidget(right_pane)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 8)
+        splitter.setSizes([480, 1400])
         self.setCentralWidget(splitter)
 
     def _build_left_pane(self) -> QWidget:
@@ -87,7 +97,6 @@ class MainWindow(QMainWindow):
 
         self.result_count_label = QLabel("Results: 0")
         self.result_list = QListWidget()
-        self.result_list.setIconSize(QSize(180, 240))
         self.result_list.setSpacing(10)
         self.left_stack = QStackedWidget()
         self.left_stack.addWidget(self._build_empty_state())
@@ -116,9 +125,13 @@ class MainWindow(QMainWindow):
 
         self.fit_width_button = QPushButton("Fit Width")
         self.actual_size_button = QPushButton("Actual Size")
+        self.prev_page_button = QPushButton("Previous Page")
+        self.next_page_button = QPushButton("Next Page")
         self.zoom_out_button = QPushButton("-")
         self.zoom_in_button = QPushButton("+")
 
+        controls_layout.addWidget(self.prev_page_button)
+        controls_layout.addWidget(self.next_page_button)
         controls_layout.addWidget(self.fit_width_button)
         controls_layout.addWidget(self.actual_size_button)
         controls_layout.addStretch(1)
@@ -127,7 +140,7 @@ class MainWindow(QMainWindow):
 
         self.page_viewer = QLabel("High-resolution page preview will appear here.")
         self.page_viewer.setAlignment(Qt.AlignCenter)
-        self.page_viewer.setMinimumSize(480, 640)
+        self.page_viewer.setMinimumSize(900, 1200)
         self.page_viewer.setStyleSheet("background: #f4f4f4; color: #666;")
         self.page_scroll_area = QScrollArea()
         self.page_scroll_area.setWidgetResizable(True)
@@ -198,6 +211,17 @@ class MainWindow(QMainWindow):
         self.exit_action = QAction("Exit", self)
         file_menu.addAction(self.exit_action)
 
+    def _configure_initial_window_size(self) -> None:
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            self.resize(1800, 1200)
+            return
+
+        geometry = screen.availableGeometry()
+        width = max(1600, int(geometry.width() * 0.9))
+        height = max(1000, int(geometry.height() * 0.9))
+        self.resize(width, height)
+
     def _connect_signals(self) -> None:
         self.open_button.clicked.connect(self._open_pdf_files)
         self.empty_state_button.clicked.connect(self._open_pdf_files)
@@ -210,6 +234,8 @@ class MainWindow(QMainWindow):
         )
         self.fit_width_button.clicked.connect(self._set_fit_width_mode)
         self.actual_size_button.clicked.connect(self._set_actual_size_mode)
+        self.prev_page_button.clicked.connect(self._show_previous_page)
+        self.next_page_button.clicked.connect(self._show_next_page)
         self.zoom_in_button.clicked.connect(self._zoom_in)
         self.zoom_out_button.clicked.connect(self._zoom_out)
 
@@ -277,19 +303,19 @@ class MainWindow(QMainWindow):
         self._result_document_path = selected_document.file_path
         self._active_search_token += 1
         current_search_token = self._active_search_token
+        self._result_thumbnail_labels = {}
         self.result_list.clear()
         self.left_stack.setCurrentIndex(2)
 
-        for result in self._results:
-            item = QListWidgetItem(
-                f"Page {result.page_number}: "
-                f"{result.context_before}[{result.context_match}]{result.context_after}"
-            )
+        for row_index, result in enumerate(self._results):
+            item = QListWidgetItem()
             item.setData(Qt.UserRole, result.page_number)
             item.setData(Qt.UserRole + 1, current_search_token)
-            item.setIcon(QIcon())
-            item.setSizeHint(QSize(0, 260))
+            item.setSizeHint(QSize(0, 280))
             self.result_list.addItem(item)
+            widget, thumbnail_label = self._build_result_item_widget(result)
+            self._result_thumbnail_labels[row_index] = thumbnail_label
+            self.result_list.setItemWidget(item, widget)
 
         self.result_count_label.setText(f"Results: {len(self._results)}")
         if self._results:
@@ -299,6 +325,9 @@ class MainWindow(QMainWindow):
             self.left_stack.setCurrentIndex(1)
             self.page_title_label.setText("No page selected")
             self._current_page_pixmap = None
+            self._current_document = None
+            self._current_page_number = None
+            self._update_page_navigation_buttons()
             self.page_viewer.clear()
             self.page_viewer.setText("No search result. Try another keyword.")
 
@@ -311,26 +340,7 @@ class MainWindow(QMainWindow):
             return
 
         result = self._results[row_index]
-        self.page_title_label.setText(f"Page {result.page_number}")
-        self.page_viewer.clear()
-        self.page_viewer.setText("Rendering page preview...")
-
-        self._active_render_token += 1
-        current_token = self._active_render_token
-        worker = TaskWorker(
-            lambda: (
-                current_token,
-                result.page_number,
-                self._render_service.render_page_png_bytes(
-                    file_path=selected_document.file_path,
-                    page_number=result.page_number,
-                    dpi=160,
-                ),
-            )
-        )
-        worker.signals.finished.connect(self._on_page_render_finished)
-        worker.signals.failed.connect(self._on_background_task_failed)
-        self._thread_pool.start(worker)
+        self._start_page_render(selected_document, result.page_number)
 
     def _selected_document(self) -> RegisteredDocument | None:
         current_index = self.pdf_selector.currentIndex()
@@ -364,11 +374,13 @@ class MainWindow(QMainWindow):
             if search_token != self._active_search_token:
                 continue
 
-            icon = self._preview_service.build_result_icon(
+            pixmap = self._preview_service.build_result_pixmap(
                 file_path=self._result_document_path,
                 page_number=page_number,
             )
-            item.setIcon(icon)
+            thumbnail_label = self._result_thumbnail_labels.get(row_index)
+            if thumbnail_label is not None:
+                thumbnail_label.setPixmap(pixmap)
 
     def _on_page_render_finished(self, payload: object) -> None:
         render_token, page_number, png_bytes = payload
@@ -378,9 +390,11 @@ class MainWindow(QMainWindow):
         image = QImage.fromData(png_bytes, "PNG")
         pixmap = QPixmap.fromImage(image)
         self._current_page_pixmap = pixmap
+        self._current_page_number = page_number
         self._zoom_factor = 1.0
         self._fit_width_mode = True
         self.page_title_label.setText(f"Page {page_number}")
+        self._update_page_navigation_buttons()
         self._apply_viewer_pixmap()
         self.statusBar().showMessage("Page render completed.", 3000)
 
@@ -389,8 +403,10 @@ class MainWindow(QMainWindow):
         self.index_progress_bar.hide()
         self.index_status_label.setText(f"Indexing status: failed - {message}")
         self._current_page_pixmap = None
+        self._current_page_number = None
         self.page_viewer.clear()
         self.page_viewer.setText(f"Task failed: {message}")
+        self._update_page_navigation_buttons()
 
     def _set_busy_state(self, is_busy: bool, message: str) -> None:
         self.open_button.setEnabled(not is_busy)
@@ -460,3 +476,112 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if self._fit_width_mode and self._current_page_pixmap is not None:
             self._apply_viewer_pixmap()
+
+    def keyPressEvent(self, event) -> None:  # type: ignore[override]
+        if self.search_input.hasFocus():
+            super().keyPressEvent(event)
+            return
+
+        if event.key() == Qt.Key_Up:
+            self._show_previous_page()
+            event.accept()
+            return
+
+        if event.key() == Qt.Key_Down:
+            self._show_next_page()
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+
+    def _show_previous_page(self) -> None:
+        if self._current_document is None or self._current_page_number is None:
+            return
+        if self._current_page_number <= 1:
+            return
+        self._start_page_render(self._current_document, self._current_page_number - 1)
+
+    def _show_next_page(self) -> None:
+        if self._current_document is None or self._current_page_number is None:
+            return
+        if self._current_page_number >= self._current_document.page_count:
+            return
+        self._start_page_render(self._current_document, self._current_page_number + 1)
+
+    def _start_page_render(
+        self,
+        document: RegisteredDocument,
+        page_number: int,
+    ) -> None:
+        self._current_document = document
+        self.page_title_label.setText(f"Page {page_number}")
+        self.page_viewer.clear()
+        self.page_viewer.setText("Rendering page preview...")
+        self._update_page_navigation_buttons()
+
+        self._active_render_token += 1
+        current_token = self._active_render_token
+        worker = TaskWorker(
+            lambda: (
+                current_token,
+                page_number,
+                self._render_service.render_page_png_bytes(
+                    file_path=document.file_path,
+                    page_number=page_number,
+                    dpi=160,
+                ),
+            )
+        )
+        worker.signals.finished.connect(self._on_page_render_finished)
+        worker.signals.failed.connect(self._on_background_task_failed)
+        self._thread_pool.start(worker)
+
+    def _update_page_navigation_buttons(self) -> None:
+        if self._current_document is None or self._current_page_number is None:
+            self.prev_page_button.setEnabled(False)
+            self.next_page_button.setEnabled(False)
+            return
+
+        self.prev_page_button.setEnabled(self._current_page_number > 1)
+        self.next_page_button.setEnabled(
+            self._current_page_number < self._current_document.page_count
+        )
+
+    def _build_result_item_widget(self, result: SearchResult) -> tuple[QWidget, QLabel]:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(12)
+
+        thumbnail_label = QLabel()
+        thumbnail_label.setFixedSize(180, 240)
+        thumbnail_label.setAlignment(Qt.AlignCenter)
+        thumbnail_label.setStyleSheet("background: #f4f4f4; border: 1px solid #ddd;")
+        thumbnail_label.setText("Loading...")
+
+        text_label = QLabel()
+        text_label.setWordWrap(True)
+        text_label.setTextFormat(Qt.RichText)
+        text_label.setTextInteractionFlags(Qt.NoTextInteraction)
+        text_label.setText(self._build_highlighted_result_html(result))
+
+        layout.addWidget(thumbnail_label)
+        layout.addWidget(text_label, 1)
+        return container, thumbnail_label
+
+    def _build_highlighted_result_html(self, result: SearchResult) -> str:
+        before = html.escape(result.context_before)
+        match = html.escape(result.context_match)
+        after = html.escape(result.context_after)
+        return (
+            f"<div>"
+            f"<div style='font-weight:600; margin-bottom:6px;'>Page {result.page_number}</div>"
+            f"<div style='line-height:1.5;'>"
+            f"{before}"
+            f"<span style='background:#ffe58f; color:#222; font-weight:700; padding:1px 2px;'>"
+            f"{match}"
+            f"</span>"
+            f"{after}"
+            f"</div>"
+            f"</div>"
+        )

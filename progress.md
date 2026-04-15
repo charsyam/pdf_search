@@ -23,6 +23,9 @@ Current working state after that commit:
 - rarity-aware ranking signal added
 - explicit no-results empty state added to the left pane
 - indexing progress UI added
+- right-pane previous/next page navigation added
+- right-pane page navigation now also supports Up/Down arrow keys
+- left search results now visually highlight the matched text
 
 ## Implemented So Far
 
@@ -60,7 +63,10 @@ Current working state after that commit:
 - indexing progress label and progress bar implemented
 - Enter-based search connected
 - result list connected
+- left search results visually highlight the matched snippet
 - result click renders the selected page as an image in the right pane
+- right pane supports previous-page and next-page navigation
+- right pane page navigation also works with keyboard Up/Down keys
 - result list items include basic page thumbnails
 - indexing and right-pane page rendering now run through worker tasks
 - right-pane supports `Fit Width`, `Actual Size`, `Zoom In`, and `Zoom Out`
